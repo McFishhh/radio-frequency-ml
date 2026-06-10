@@ -23,10 +23,10 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(__file__))
     from data_loader import DataConfig, build_datasets
 
-def build_tinyvgg(n_classes: int) -> tf.keras.Model:
+def build_tinyvgg(input_shape: tuple[int, int, int], n_classes: int) -> tf.keras.Model:
     return Sequential(
         [
-            Input(shape=(1024, 2, 1)),
+            Input(shape=input_shape),
             Conv2D(16, (3, 3), padding="same", activation="relu"),
             Conv2D(16, (3, 3), padding="same", activation="relu"),
             MaxPool2D((2, 1)),
@@ -81,7 +81,8 @@ def main(config_path: str) -> None:
     tf.keras.utils.set_random_seed(training_cfg.get("seed", 42))
 
     data_config = DataConfig(
-        file_path=data_cfg.get("train_hdf5", data_cfg.get("hdf5")),
+        dataset=data_cfg.get("dataset", "radioml2018"),
+        file_path=data_cfg.get("path", data_cfg.get("train_hdf5", data_cfg.get("hdf5"))),
         data_ratio=data_cfg.get("data_ratio", 0.01),
         train_ratio=data_cfg.get("train_ratio", 0.8),
         batch_size=training_cfg.get("batch_size", 16),
@@ -92,12 +93,12 @@ def main(config_path: str) -> None:
         stratified=data_cfg.get("stratified", True),
     )
 
-    train_ds, val_ds, class_counts = build_datasets(data_config)
+    train_ds, val_ds, class_counts, input_shape, n_classes = build_datasets(data_config)
     Path(counts_path).parent.mkdir(parents=True, exist_ok=True)
     class_counts.to_csv(counts_path, index=False)
     print(class_counts.to_string(index=False))
 
-    model = build_tinyvgg(model_cfg.get("n_classes", 24))
+    model = build_tinyvgg(input_shape, n_classes)
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=training_cfg.get("lr", 1e-3)),
         loss=tf.keras.losses.CategoricalCrossentropy(),

@@ -1,23 +1,23 @@
 data:
-  dataset: radioml2018
-  path: C:/Users/Wjunxion/Documents/datasets/radioml2018/GOLD_XYZ_OSC.0001_1024.hdf5
-  data_ratio: 0.01
+  dataset: radioml2016
+  path: C:/Users/Wjunxion/Documents/datasets/radioml2016/RML2016.10a_dict.pkl
+  data_ratio: 1.0
   train_ratio: 0.8
   stratified: true
   eps: 1.0e-6
 
 model:
-  n_classes: 24
+  n_classes:
 
 training:
-  batch_size: 16
+  batch_size: 64
   shuffle_buffer: 512
   epochs: 10
   lr: 0.001
   seed: 42
 
 results:
-  dir: model_history/tinyvgg
+  dir: model_history/tinyvgg_radioml2016
   log: training_history.csv
   model: tinyvgg.keras
   class_counts: class_counts.csv
