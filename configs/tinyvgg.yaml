@@ -15,6 +15,9 @@ training:
   epochs: 10
   lr: 0.001
   seed: 42
+  augment_train: true
+  awgn_std: 0.05
+  rotation_count: 4
 
 results:
   dir: model_history/tinyvgg
@@ -22,3 +25,5 @@ results:
   model: tinyvgg.keras
   class_counts: class_counts.csv
   metrics: mlpipeline-metrics.json
+  snr_predictions: snr_predictions.csv
+  snr_plot: snr_accuracy.png

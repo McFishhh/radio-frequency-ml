@@ -91,6 +91,9 @@ def main(config_path: str) -> None:
         eps=data_cfg.get("eps", 1e-6),
         num_classes=model_cfg.get("n_classes", 24),
         stratified=data_cfg.get("stratified", True),
+        augment_train=training_cfg.get("augment_train", False),
+        awgn_std=training_cfg.get("awgn_std", 0.05),
+        rotation_count=training_cfg.get("rotation_count", 4),
     )
 
     train_ds, val_ds, class_counts, input_shape, n_classes = build_datasets(data_config)

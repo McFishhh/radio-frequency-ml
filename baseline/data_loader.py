@@ -17,6 +17,11 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 
+try:
+    from .augmentation import augment_dataset
+except ImportError:
+    from augmentation import augment_dataset
+
 @dataclass(frozen=True)
 class DataConfig:
     dataset: str
@@ -29,6 +34,9 @@ class DataConfig:
     eps: float = 1e-6
     num_classes: int | None = None
     stratified: bool = True
+    augment_train: bool = False
+    awgn_std: float = 0.05
+    rotation_count: int = 4
 
 def preprocess(x: tf.Tensor, y: tf.Tensor, eps: float) -> tuple[tf.Tensor, tf.Tensor]:
     mean = tf.reduce_mean(x, axis=0, keepdims=True)
@@ -49,6 +57,12 @@ def make_tf_dataset(
             tf.TensorSpec(shape=(config.num_classes,), dtype=tf.int32),
         ),
     )
+    if training and config.augment_train:
+        ds = augment_dataset(
+            ds,
+            awgn_std=config.awgn_std,
+            rotation_count=config.rotation_count,
+        )
     ds = ds.map(lambda x, y: preprocess(x, y, config.eps), num_parallel_calls=tf.data.AUTOTUNE)
     if training:
         ds = ds.shuffle(config.shuffle_buffer, seed=config.seed, reshuffle_each_iteration=True)
