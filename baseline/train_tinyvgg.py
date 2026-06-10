@@ -1,23 +1,29 @@
-"""Kubeflow-friendly TinyVGG training entrypoint."""
+"""TinyVGG baseline training entrypoint.
+
+Usage:
+    python baseline/train_tinyvgg.py
+    python baseline/train_tinyvgg.py configs/tinyvgg.yaml
+"""
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
-import pandas as pd
 import tensorflow as tf
+import yaml
 from tensorflow.keras import Sequential
 from tensorflow.keras.layers import Conv2D, Dense, Flatten, Input, MaxPool2D
 
 try:
     from .data_loader import DataConfig, build_datasets
 except ImportError:
+    sys.path.insert(0, os.path.dirname(__file__))
     from data_loader import DataConfig, build_datasets
 
-def build_tinyvgg(num_classes: int) -> tf.keras.Model:
+def build_tinyvgg(n_classes: int) -> tf.keras.Model:
     return Sequential(
         [
             Input(shape=(1024, 2, 1)),
@@ -28,43 +34,24 @@ def build_tinyvgg(num_classes: int) -> tf.keras.Model:
             Conv2D(16, (3, 3), padding="same", activation="relu"),
             MaxPool2D((2, 1)),
             Flatten(),
-            Dense(num_classes, activation="softmax"),
+            Dense(n_classes, activation="softmax"),
         ],
         name="TinyVGG",
     )
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--file-path", required=True, help="Path to GOLD_XYZ_OSC.0001_1024.hdf5.")
-    parser.add_argument("--model-path", default=os.getenv("MODEL_PATH", "/tmp/outputs/model/tinyvgg.keras"))
-    parser.add_argument("--history-path", default=os.getenv("HISTORY_PATH", "/tmp/outputs/history/training_history.csv"))
-    parser.add_argument("--class-counts-path", default=os.getenv("CLASS_COUNTS_PATH", "/tmp/outputs/history/class_counts.csv"))
-    parser.add_argument("--metrics-path", default=os.getenv("METRICS_PATH", "/tmp/outputs/metrics/mlpipeline-metrics.json"))
-    parser.add_argument("--data-ratio", type=float, default=0.01)
-    parser.add_argument("--train-ratio", type=float, default=0.8)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--shuffle-buffer", type=int, default=512)
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--learning-rate", type=float, default=1e-3)
-    parser.add_argument("--num-classes", type=int, default=24)
-    parser.add_argument("--random-split", action="store_true")
-    return parser.parse_args()
-
-def ensure_parent(path: str) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
+def result_path(results_dir: str, value: str) -> str:
+    path = Path(value)
+    return str(path if path.is_absolute() else Path(results_dir) / path)
 
 def keras_model_path(path: str) -> str:
-    output_path = Path(path)
-    if output_path.suffix in {".keras", ".h5"}:
-        ensure_parent(str(output_path))
-        return str(output_path)
+    model_path = Path(path)
+    if model_path.suffix not in {".keras", ".h5"}:
+        model_path = model_path / "tinyvgg.keras"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    return str(model_path)
 
-    output_path.mkdir(parents=True, exist_ok=True)
-    return str(output_path / "tinyvgg.keras")
-
-def save_kubeflow_metrics(path: str, metrics: dict[str, float]) -> None:
-    ensure_parent(path)
+def write_kubeflow_metrics(path: str, metrics: dict[str, float]) -> None:
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "metrics": [
             {"name": name, "numberValue": float(value), "format": "RAW"}
@@ -73,53 +60,78 @@ def save_kubeflow_metrics(path: str, metrics: dict[str, float]) -> None:
     }
     Path(path).write_text(json.dumps(payload), encoding="utf-8")
 
-def main() -> None:
-    args = parse_args()
-    tf.keras.utils.set_random_seed(args.seed)
+def main(config_path: str) -> None:
+    with open(config_path, encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
 
-    config = DataConfig(
-        file_path=args.file_path,
-        data_ratio=args.data_ratio,
-        train_ratio=args.train_ratio,
-        batch_size=args.batch_size,
-        shuffle_buffer=args.shuffle_buffer,
-        seed=args.seed,
-        num_classes=args.num_classes,
-        stratified=not args.random_split,
+    data_cfg = cfg["data"]
+    model_cfg = cfg["model"]
+    training_cfg = cfg["training"]
+    results_cfg = cfg["results"]
+
+    results_dir = results_cfg["dir"]
+    os.makedirs(results_dir, exist_ok=True)
+
+    log_path = result_path(results_dir, results_cfg.get("log", "training_history.csv"))
+    model_path = keras_model_path(result_path(results_dir, results_cfg.get("model", "tinyvgg.keras")))
+    counts_path = result_path(results_dir, results_cfg.get("class_counts", "class_counts.csv"))
+    metrics_path = result_path(results_dir, results_cfg.get("metrics", "mlpipeline-metrics.json"))
+    Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+
+    tf.keras.utils.set_random_seed(training_cfg.get("seed", 42))
+
+    data_config = DataConfig(
+        file_path=data_cfg.get("train_hdf5", data_cfg.get("hdf5")),
+        data_ratio=data_cfg.get("data_ratio", 0.01),
+        train_ratio=data_cfg.get("train_ratio", 0.8),
+        batch_size=training_cfg.get("batch_size", 16),
+        shuffle_buffer=training_cfg.get("shuffle_buffer", 512),
+        seed=training_cfg.get("seed", 42),
+        eps=data_cfg.get("eps", 1e-6),
+        num_classes=model_cfg.get("n_classes", 24),
+        stratified=data_cfg.get("stratified", True),
     )
-    train_ds, test_ds, class_counts = build_datasets(config)
 
-    model_path = keras_model_path(args.model_path)
-    for path in [args.history_path, args.class_counts_path]:
-        ensure_parent(path)
-
-    class_counts.to_csv(args.class_counts_path, index=False)
+    train_ds, val_ds, class_counts = build_datasets(data_config)
+    Path(counts_path).parent.mkdir(parents=True, exist_ok=True)
+    class_counts.to_csv(counts_path, index=False)
     print(class_counts.to_string(index=False))
 
-    model = build_tinyvgg(args.num_classes)
+    model = build_tinyvgg(model_cfg.get("n_classes", 24))
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=training_cfg.get("lr", 1e-3)),
         loss=tf.keras.losses.CategoricalCrossentropy(),
         metrics=[tf.keras.metrics.CategoricalAccuracy(name="accuracy")],
     )
 
-    history = model.fit(train_ds, validation_data=test_ds, epochs=args.epochs)
-    pd.DataFrame({"epoch": range(1, len(history.history["loss"]) + 1), **history.history}).to_csv(
-        args.history_path,
-        index=False,
+    callbacks = [
+        tf.keras.callbacks.CSVLogger(log_path),
+        tf.keras.callbacks.ModelCheckpoint(
+            model_path,
+            monitor="val_accuracy",
+            mode="max",
+            save_best_only=True,
+        ),
+    ]
+
+    model.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=training_cfg.get("epochs", 10),
+        callbacks=callbacks,
     )
 
-    test_loss, test_accuracy = model.evaluate(test_ds)
-    model.save(model_path)
-    save_kubeflow_metrics(
-        args.metrics_path,
-        {"test_loss": test_loss, "test_accuracy": test_accuracy},
+    val_loss, val_accuracy = model.evaluate(val_ds)
+    write_kubeflow_metrics(
+        metrics_path,
+        {"val_loss": val_loss, "val_accuracy": val_accuracy},
     )
 
-    print(f"model_path={model_path}")
-    print(f"history_path={args.history_path}")
-    print(f"class_counts_path={args.class_counts_path}")
-    print(f"metrics_path={args.metrics_path}")
+    print(f"Best model : {model_path}")
+    print(f"Log        : {log_path}")
+    print(f"Counts     : {counts_path}")
+    print(f"Metrics    : {metrics_path}")
 
 if __name__ == "__main__":
-    main()
+    config = sys.argv[1] if len(sys.argv) > 1 else "configs/tinyvgg.yaml"
+    main(config)
