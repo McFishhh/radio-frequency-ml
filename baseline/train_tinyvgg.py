@@ -18,20 +18,20 @@ from tensorflow.keras import Sequential
 from tensorflow.keras.layers import Conv2D, Dense, Flatten, Input, MaxPool2D
 
 try:
-    from .data_loader import DataConfig, build_datasets
+    from .data_loader import DataConfig, build_datasets, snr_split_table
 except ImportError:
     sys.path.insert(0, os.path.dirname(__file__))
-    from data_loader import DataConfig, build_datasets
+    from data_loader import DataConfig, build_datasets, snr_split_table
 
 def build_tinyvgg(input_shape: tuple[int, int, int], n_classes: int) -> tf.keras.Model:
     return Sequential(
         [
             Input(shape=input_shape),
-            Conv2D(16, (3, 3), padding="same", activation="relu"),
-            Conv2D(16, (3, 3), padding="same", activation="relu"),
+            Conv2D(16, (3, 2), padding="same", activation="relu"),
+            Conv2D(16, (3, 2), padding="same", activation="relu"),
             MaxPool2D((2, 1)),
-            Conv2D(16, (3, 3), padding="same", activation="relu"),
-            Conv2D(16, (3, 3), padding="same", activation="relu"),
+            Conv2D(16, (3, 2), padding="same", activation="relu"),
+            Conv2D(16, (3, 2), padding="same", activation="relu"),
             MaxPool2D((2, 1)),
             Flatten(),
             Dense(n_classes, activation="softmax"),
@@ -75,6 +75,7 @@ def main(config_path: str) -> None:
     log_path = result_path(results_dir, results_cfg.get("log", "training_history.csv"))
     model_path = keras_model_path(result_path(results_dir, results_cfg.get("model", "tinyvgg.keras")))
     counts_path = result_path(results_dir, results_cfg.get("class_counts", "class_counts.csv"))
+    snr_counts_path = result_path(results_dir, results_cfg.get("snr_counts", "snr_counts.csv"))
     metrics_path = result_path(results_dir, results_cfg.get("metrics", "mlpipeline-metrics.json"))
     Path(log_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -100,6 +101,12 @@ def main(config_path: str) -> None:
     Path(counts_path).parent.mkdir(parents=True, exist_ok=True)
     class_counts.to_csv(counts_path, index=False)
     print(class_counts.to_string(index=False))
+
+    if "snr" in class_counts.columns:
+        snr_counts = snr_split_table(class_counts)
+        Path(snr_counts_path).parent.mkdir(parents=True, exist_ok=True)
+        snr_counts.to_csv(snr_counts_path, index=False)
+        print(snr_counts.to_string(index=False))
 
     model = build_tinyvgg(input_shape, n_classes)
     model.compile(
@@ -134,6 +141,8 @@ def main(config_path: str) -> None:
     print(f"Best model : {model_path}")
     print(f"Log        : {log_path}")
     print(f"Counts     : {counts_path}")
+    if "snr" in class_counts.columns:
+        print(f"SNR counts : {snr_counts_path}")
     print(f"Metrics    : {metrics_path}")
 
 if __name__ == "__main__":

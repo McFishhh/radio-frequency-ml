@@ -24,6 +24,7 @@ results:
   log: training_history.csv
   model: tinyvgg.keras
   class_counts: class_counts.csv
+  snr_counts: snr_counts.csv
   metrics: mlpipeline-metrics.json
   snr_predictions: snr_predictions.csv
   snr_plot: snr_accuracy.png
