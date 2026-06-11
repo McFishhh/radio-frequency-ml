@@ -34,7 +34,7 @@ class DataConfig:
 def preprocess(x: tf.Tensor, y: tf.Tensor, eps: float) -> tuple[tf.Tensor, tf.Tensor]:
     mean = tf.reduce_mean(x, axis=0, keepdims=True)
     std = tf.math.reduce_std(x, axis=0, keepdims=True)
-    return tf.expand_dims((x - mean) / (std + eps), -1), tf.cast(y, tf.float32)
+    return (x - mean) / (std + eps), tf.cast(y, tf.float32)
 
 def split_indices(
     labels: np.ndarray,
@@ -139,7 +139,7 @@ def load_radioml2018(config: DataConfig):
         make_tf_dataset(config, (1024, 2), lambda: gen(train_idx), True),
         make_tf_dataset(config, (1024, 2), lambda: gen(val_idx), False),
         counts,
-        (1024, 2, 1),
+        (1024, 2),
         config.num_classes,
     )
 
@@ -173,7 +173,7 @@ def load_radioml2016(config: DataConfig):
         make_tf_dataset(config, (128, 2), lambda: gen(train_idx), True),
         make_tf_dataset(config, (128, 2), lambda: gen(val_idx), False),
         counts,
-        (128, 2, 1),
+        (128, 2),
         config.num_classes,
     )
 

@@ -1,8 +1,8 @@
-"""TinyVGG baseline training entrypoint.
+"""DL4PL-style Conv1D baseline training entrypoint.
 
 Usage:
-    python baseline/train_tinyvgg.py
-    python baseline/train_tinyvgg.py configs/tinyvgg.yaml
+    python baseline/train_dl4pl.py
+    python baseline/train_dl4pl.py configs/tinyvgg_radioml2016.yaml
 """
 
 from __future__ import annotations
@@ -23,20 +23,27 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(__file__))
     from data_loader import DataConfig, build_datasets, snr_split_table
 
-def build_tinyvgg(input_shape: tuple[int, int, int], n_classes: int) -> tf.keras.Model:
+def build_dl4pl(input_shape: tuple[int, int], n_classes: int) -> tf.keras.Model:
     return Sequential(
         [
             Input(shape=input_shape),
-            Conv2D(16, (3, 2), padding="same", activation="relu"),
-            Conv2D(16, (3, 2), padding="same", activation="relu"),
-            MaxPool2D((2, 1)),
-            Conv2D(16, (3, 2), padding="same", activation="relu"),
-            Conv2D(16, (3, 2), padding="same", activation="relu"),
-            MaxPool2D((2, 1)),
+            Conv1D(128, kernel_size=8, padding="valid", activation="relu"),
+            MaxPool1D(pool_size=2, strides=2),
+            Conv1D(64, kernel_size=16, padding="valid", activation="relu"),
+            MaxPool1D(pool_size=2, strides=2),
             Flatten(),
+            Dense(128, activation="relu"),
+            Dense(64, activation="relu"),
+            Dense(32, activation="relu"),
             Dense(n_classes, activation="softmax"),
         ],
-        name="TinyVGG",
+        name="DL4PL_Conv1D",
+    )
+
+def squeeze_conv2d_channel(ds: tf.data.Dataset) -> tf.data.Dataset:
+    return ds.map(
+        lambda x, y: (tf.squeeze(x, axis=-1), y),
+        num_parallel_calls=tf.data.AUTOTUNE,
     )
 
 def result_path(results_dir: str, value: str) -> str:
@@ -46,7 +53,7 @@ def result_path(results_dir: str, value: str) -> str:
 def keras_model_path(path: str) -> str:
     model_path = Path(path)
     if model_path.suffix not in {".keras", ".h5"}:
-        model_path = model_path / "tinyvgg.keras"
+        model_path = model_path / "dl4pl_conv1d.keras"
     model_path.parent.mkdir(parents=True, exist_ok=True)
     return str(model_path)
 
@@ -69,11 +76,11 @@ def main(config_path: str) -> None:
     training_cfg = cfg["training"]
     results_cfg = cfg["results"]
 
-    results_dir = results_cfg["dir"]
+    results_dir = results_cfg.get("dir", "model_history/dl4pl")
     os.makedirs(results_dir, exist_ok=True)
 
     log_path = result_path(results_dir, results_cfg.get("log", "training_history.csv"))
-    model_path = keras_model_path(result_path(results_dir, results_cfg.get("model", "tinyvgg.keras")))
+    model_path = keras_model_path(result_path(results_dir, results_cfg.get("model", "dl4pl_conv1d.keras")))
     counts_path = result_path(results_dir, results_cfg.get("class_counts", "class_counts.csv"))
     snr_counts_path = result_path(results_dir, results_cfg.get("snr_counts", "snr_counts.csv"))
     metrics_path = result_path(results_dir, results_cfg.get("metrics", "mlpipeline-metrics.json"))
@@ -82,15 +89,15 @@ def main(config_path: str) -> None:
     tf.keras.utils.set_random_seed(training_cfg.get("seed", 42))
 
     data_config = DataConfig(
-        dataset=data_cfg.get("dataset", "radioml2018"),
+        dataset=data_cfg.get("dataset", "radioml2016"),
         file_path=data_cfg.get("path", data_cfg.get("train_hdf5", data_cfg.get("hdf5"))),
-        data_ratio=data_cfg.get("data_ratio", 0.01),
+        data_ratio=data_cfg.get("data_ratio", 1.0),
         train_ratio=data_cfg.get("train_ratio", 0.8),
-        batch_size=training_cfg.get("batch_size", 16),
+        batch_size=training_cfg.get("batch_size", 64),
         shuffle_buffer=training_cfg.get("shuffle_buffer", 512),
         seed=training_cfg.get("seed", 42),
         eps=data_cfg.get("eps", 1e-6),
-        num_classes=model_cfg.get("n_classes", 24),
+        num_classes=model_cfg.get("n_classes"),
         stratified=data_cfg.get("stratified", True),
         augment_train=training_cfg.get("augment_train", False),
         awgn_std=training_cfg.get("awgn_std", 0.05),
@@ -98,6 +105,10 @@ def main(config_path: str) -> None:
     )
 
     train_ds, val_ds, class_counts, input_shape, n_classes = build_datasets(data_config)
+    train_ds = squeeze_conv2d_channel(train_ds)
+    val_ds = squeeze_conv2d_channel(val_ds)
+    conv1d_input_shape = input_shape[:2]
+
     Path(counts_path).parent.mkdir(parents=True, exist_ok=True)
     class_counts.to_csv(counts_path, index=False)
     print(class_counts.to_string(index=False))
@@ -108,7 +119,7 @@ def main(config_path: str) -> None:
         snr_counts.to_csv(snr_counts_path, index=False)
         print(snr_counts.to_string(index=False))
 
-    model = build_tinyvgg(input_shape, n_classes)
+    model = build_dl4pl(conv1d_input_shape, n_classes)
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=training_cfg.get("lr", 1e-3)),
         loss=tf.keras.losses.CategoricalCrossentropy(),
@@ -132,11 +143,9 @@ def main(config_path: str) -> None:
         callbacks=callbacks,
     )
 
-    val_loss, val_accuracy = model.evaluate(val_ds)
-    write_kubeflow_metrics(
-        metrics_path,
-        {"val_loss": val_loss, "val_accuracy": val_accuracy},
-    )
+    best_model = tf.keras.models.load_model(model_path)
+    val_loss, val_accuracy = best_model.evaluate(val_ds)
+    write_kubeflow_metrics(metrics_path, {"val_loss": val_loss, "val_accuracy": val_accuracy})
 
     print(f"Best model : {model_path}")
     print(f"Log        : {log_path}")
@@ -146,5 +155,5 @@ def main(config_path: str) -> None:
     print(f"Metrics    : {metrics_path}")
 
 if __name__ == "__main__":
-    config = sys.argv[1] if len(sys.argv) > 1 else "configs/tinyvgg.yaml"
+    config = sys.argv[1] if len(sys.argv) > 1 else "configs/tinyvgg_radioml2016.yaml"
     main(config)
